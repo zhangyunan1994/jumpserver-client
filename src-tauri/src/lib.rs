@@ -27,6 +27,88 @@ struct Asset {
     address: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AssetTreeItem {
+    id: String,
+    #[serde(rename = "parentId")]
+    parent_id: String,
+    name: String,
+    #[serde(rename = "type")]
+    item_type: String,
+    address: String,
+    #[serde(rename = "assetId")]
+    asset_id: String,
+}
+
+fn json_str<'a>(item: &'a Value, keys: &[&str]) -> &'a str {
+    for key in keys {
+        if let Some(value) = item.get(*key).and_then(|v| v.as_str()) {
+            if !value.is_empty() {
+                return value;
+            }
+        }
+    }
+    ""
+}
+
+fn json_pointer_str<'a>(item: &'a Value, pointer: &str) -> Option<&'a str> {
+    item.pointer(pointer).and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+}
+
+fn tree_item_type(item: &Value) -> &'static str {
+    match json_pointer_str(item, "/meta/type") {
+        Some("node") => "node",
+        Some("asset") => "asset",
+        _ => {
+            if json_pointer_str(item, "/meta/data/platform_type").is_some()
+                || json_pointer_str(item, "/meta/data/platform/type").is_some()
+            {
+                "asset"
+            } else if item.get("isParent").and_then(|v| v.as_bool()).unwrap_or(false) {
+                "node"
+            } else {
+                "asset"
+            }
+        }
+    }
+}
+
+fn asset_platform_type(item: &Value) -> &str {
+    json_pointer_str(item, "/meta/data/platform_type")
+        .or_else(|| json_pointer_str(item, "/meta/data/platform/type"))
+        .unwrap_or("")
+}
+
+fn asset_display_name<'a>(item: &'a Value, address: &'a str) -> &'a str {
+    let name = json_pointer_str(item, "/meta/data/name")
+        .or_else(|| item.get("name").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+        .unwrap_or("");
+    if !name.is_empty() {
+        name
+    } else if !address.is_empty() {
+        address
+    } else {
+        "Unknown"
+    }
+}
+
+fn node_display_name(item: &Value) -> String {
+    if let Some(value) = json_pointer_str(item, "/meta/data/value") {
+        return value.to_string();
+    }
+    let raw = json_str(item, &["name", "title"]);
+    if let Some(pos) = raw.rfind(" (") {
+        if raw.ends_with(')') {
+            return raw[..pos].to_string();
+        }
+    }
+    if raw.is_empty() {
+        "未命名节点".to_string()
+    } else {
+        raw.to_string()
+    }
+}
+
 // ==================== JumpServer API 工具 ====================
 
 // 按字节上限截断字符串，但回退到最近的字符边界，
@@ -386,48 +468,91 @@ async fn validate_credentials(
     }))
 }
 
+async fn fetch_asset_tree_items(
+    jms_url: &str,
+    key_id: &str,
+    secret: &str,
+) -> Result<Vec<Value>, String> {
+    let endpoints = [
+        "/api/v1/perms/users/self/nodes/all-with-assets/tree/",
+        "/api/v1/perms/users/self/assets/tree/",
+    ];
+    let mut last_err = "获取资产列表失败".to_string();
+    for endpoint in endpoints {
+        match jms_request(jms_url, key_id, secret, "GET", endpoint, None).await {
+            Ok(data) => {
+                if let Some(items) = data.as_array() {
+                    if !items.is_empty() || endpoint.ends_with("assets/tree/") {
+                        return Ok(items.clone());
+                    }
+                    last_err = "资产树为空".to_string();
+                } else {
+                    last_err = "获取资产列表失败".to_string();
+                }
+            }
+            Err(err) => last_err = err,
+        }
+    }
+    Err(last_err)
+}
+
 #[tauri::command]
 async fn get_assets(jms_url: String, key_id: String, secret: String) -> Result<Value, String> {
-    let data = jms_request(
-        &jms_url,
-        &key_id,
-        &secret,
-        "GET",
-        "/api/v1/perms/users/self/assets/tree/",
-        None,
-    )
-    .await?;
+    let items = fetch_asset_tree_items(&jms_url, &key_id, &secret).await?;
 
-    let items = data.as_array().ok_or("获取资产列表失败")?;
-    let assets: Vec<Asset> = items
-        .iter()
-        .filter(|item| {
-            item.get("meta")
-                .and_then(|m| m.get("data"))
-                .and_then(|d| d.get("platform_type"))
-                .and_then(|p| p.as_str())
-                == Some("linux")
-        })
-        .map(|item| Asset {
-            id: item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            title: item
-                .get("title")
-                .or_else(|| item.get("name"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown")
-                .to_string(),
-            platform_type: "linux".to_string(),
-            address: item
-                .get("meta")
-                .and_then(|m| m.get("data"))
-                .and_then(|d| d.get("address"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-        })
-        .collect();
+    let mut assets: Vec<Asset> = Vec::new();
+    let mut tree: Vec<AssetTreeItem> = Vec::new();
+    let mut seen_assets = std::collections::HashSet::new();
 
-    Ok(json!({ "success": true, "assets": assets }))
+    for item in &items {
+        let item_type = tree_item_type(item);
+        let id = json_str(item, &["id"]).to_string();
+        if id.is_empty() {
+            continue;
+        }
+        let parent_id = json_str(item, &["pId", "pid", "parentId"]).to_string();
+
+        if item_type == "node" {
+            tree.push(AssetTreeItem {
+                id,
+                parent_id,
+                name: node_display_name(item),
+                item_type: "node".to_string(),
+                address: String::new(),
+                asset_id: String::new(),
+            });
+            continue;
+        }
+
+        if asset_platform_type(item) != "linux" {
+            continue;
+        }
+
+        let address = json_pointer_str(item, "/meta/data/address")
+            .unwrap_or_else(|| json_str(item, &["address"]))
+            .to_string();
+        let name = asset_display_name(item, &address).to_string();
+
+        tree.push(AssetTreeItem {
+            id: id.clone(),
+            parent_id,
+            name: name.clone(),
+            item_type: "asset".to_string(),
+            address: address.clone(),
+            asset_id: id.clone(),
+        });
+
+        if seen_assets.insert(id.clone()) {
+            assets.push(Asset {
+                id,
+                title: name,
+                platform_type: "linux".to_string(),
+                address,
+            });
+        }
+    }
+
+    Ok(json!({ "success": true, "assets": assets, "tree": tree }))
 }
 
 #[tauri::command]
@@ -589,7 +714,7 @@ async fn get_settings(app: AppHandle) -> Result<Value, String> {
         .store(&path)
         .map_err(|e| format!("open store error: {}", e))?;
     let mut settings = json!({});
-    for key in ["jms_url", "key_id", "secret", "user_info", "asset_tags", "asset_order", "sidebar_width", "theme", "terminal_color_scheme", "quick_commands"] {
+    for key in ["jms_url", "key_id", "secret", "user_info", "asset_tags", "asset_order", "asset_layout", "sidebar_width", "theme", "terminal_color_scheme", "quick_commands"] {
         if let Some(value) = store.get(key) {
             settings[key] = value;
         }

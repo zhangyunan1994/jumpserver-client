@@ -34,7 +34,7 @@
 ### 连接与资产
 
 - **访问密钥登录**：通过 JumpServer URL、KeyID、SecretID 调用 `/api/v1/users/profile/` 完成验证并获取用户信息。
-- **资产列表展示**：拉取当前用户有权限的 Linux 资产，按树形接口过滤展示在左侧侧边栏。
+- **资产列表展示**：拉取当前用户有权限的 Linux 资产，按 JumpServer 节点目录层级展示名称（悬停显示 IP），而不是扁平 IP 列表。
 - **资产搜索**：左侧列表支持按标题、地址、标签实时模糊搜索。
 - **资产拖拽排序**：鼠标拖动资产项即可调整顺序，排序结果自动持久化。
 - **资产标签**：为任意资产添加自定义标签，标签会参与搜索过滤并持久化保存。
@@ -91,13 +91,13 @@
 │   │   ├── MainLayout.vue       # 主布局 + 侧边栏拖动
 │   │   ├── SetupForm.vue        # 登录表单
 │   │   ├── ServerList.vue       # 资产列表/搜索/标签/快捷指令/配色
+│   │   ├── AssetTree.vue        # JumpServer 目录树递归展示
 │   │   ├── TerminalPanel.vue    # 多终端容器 + 搜索栏
 │   │   └── TerminalTabBar.vue   # 标签栏（滚动/拖拽/关闭）
 │   ├── stores/app.js            # Pinia 状态管理
 │   ├── styles/
 │   │   ├── global.css           # 深色/亮色主题变量
 │   │   └── terminal-color-schemes.js  # 终端配色方案集合
-│   ├── compat.js                # window.electronAPI 兼容层
 │   ├── App.vue
 │   └── main.js
 ├── src-tauri/
