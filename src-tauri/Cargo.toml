@@ -1,6 +1,6 @@
 [package]
 name = "JumpServerClient"
-version = "1.4.3"
+version = "1.4.4"
 description = "JumpServer SSH 客户端工具"
 authors = ["you"]
 edition = "2021"
