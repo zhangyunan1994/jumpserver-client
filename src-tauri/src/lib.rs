@@ -714,7 +714,7 @@ async fn get_settings(app: AppHandle) -> Result<Value, String> {
         .store(&path)
         .map_err(|e| format!("open store error: {}", e))?;
     let mut settings = json!({});
-    for key in ["jms_url", "key_id", "secret", "user_info", "asset_tags", "asset_order", "sidebar_width", "theme", "terminal_color_scheme", "quick_commands"] {
+    for key in ["jms_url", "key_id", "secret", "user_info", "asset_tags", "asset_order", "asset_layout", "sidebar_width", "theme", "terminal_color_scheme", "quick_commands"] {
         if let Some(value) = store.get(key) {
             settings[key] = value;
         }

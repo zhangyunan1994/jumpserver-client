@@ -87,6 +87,9 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  // ==================== 资产布局 ====================
+  const assetLayout = ref('flat') // 'flat' 或 'tree'
+
   // ==================== 主题设置 ====================
   const theme = ref('dark') // 'dark' 或 'light'
   const terminalColorScheme = ref('default') // 终端配色方案
@@ -99,6 +102,7 @@ export const useAppStore = defineStore('app', () => {
     if (settings.user_info) userInfo.value = settings.user_info
     if (settings.asset_tags) assetTags.value = settings.asset_tags
     if (settings.asset_order) assetOrder.value = settings.asset_order
+    if (settings.asset_layout) assetLayout.value = settings.asset_layout
     if (settings.theme) theme.value = settings.theme
     if (settings.terminal_color_scheme) terminalColorScheme.value = settings.terminal_color_scheme
     if (settings.quick_commands) quickCommands.value = settings.quick_commands
@@ -113,6 +117,7 @@ export const useAppStore = defineStore('app', () => {
     assetTree.value = []
     assetTags.value = {}
     assetOrder.value = []
+    assetLayout.value = 'flat'
     tabs.value = []
     activeTabId.value = null
     theme.value = 'dark'
@@ -180,6 +185,11 @@ export const useAppStore = defineStore('app', () => {
     await window.electronAPI.saveSettings({ asset_order: assetOrder.value })
   }
 
+  async function setAssetLayout(layout) {
+    assetLayout.value = layout
+    await window.electronAPI.saveSettings({ asset_layout: layout })
+  }
+
   // ==================== 快捷指令管理 ====================
   function addQuickCommand(name, command, assetId = null) {
     const newCommand = {
@@ -224,7 +234,7 @@ export const useAppStore = defineStore('app', () => {
     // 配置
     jmsUrl, keyId, secret,
     // 用户 & 资产
-    userInfo, assets, assetTree, assetTags, assetOrder,
+    userInfo, assets, assetTree, assetTags, assetOrder, assetLayout,
     // Tab 管理
     tabs, activeTabId, activeTab,
     createTab, closeTab, setActiveTab,
@@ -232,7 +242,7 @@ export const useAppStore = defineStore('app', () => {
     // 设置
     setSettings, clearSettings,
     setUserInfo, setAssets,
-    updateAssetOrder, getOrderedAssets,
+    updateAssetOrder, getOrderedAssets, setAssetLayout,
     addTag, removeTag, getAssetTags,
     // 主题
     theme, setTheme,

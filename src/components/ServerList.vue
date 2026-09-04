@@ -22,6 +22,16 @@
       <div class="header-actions">
         <span class="server-count">{{ filteredAssets.length }} / {{ assets.length }}</span>
         <div class="header-buttons">
+          <n-button text size="tiny" @click="toggleLayout" :title="layoutTitle">
+            <template #icon>
+              <svg v-if="appStore.assetLayout === 'flat'" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M2 3h10M2 7h10M2 11h10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M2 3h10M4 7h8M6 11h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+              </svg>
+            </template>
+          </n-button>
           <n-popover trigger="click" placement="bottom-end">
           <template #trigger>
             <n-button text size="tiny" class="color-scheme-btn" :title="terminalColorSchemeTitle">
@@ -183,19 +193,78 @@
 
     <!-- 服务器列表 -->
     <div v-else class="list-body" ref="listBodyRef">
-      <div v-if="visibleTree.length === 0 && !loading" class="empty-state">
-        <p>暂无 Linux 服务器</p>
+      <div v-if="appStore.assetLayout === 'flat'">
+        <div v-if="filteredAssets.length === 0 && !loading" class="empty-state">
+          <p>暂无 Linux 服务器</p>
+        </div>
+
+        <div
+          v-for="(asset, index) in filteredAssets"
+          :key="asset.id"
+          class="asset-item"
+          :class="{ 'drag-over': dragOverIndex === index }"
+          draggable="true"
+          @click="openAsset(asset)"
+          @dragstart="onDragStart($event, index)"
+          @dragover.prevent="onDragOver($event, index)"
+          @dragleave="onDragLeave"
+          @drop="onDrop($event, index)"
+          @dragend="onDragEnd"
+        >
+          <!-- 连接状态指示 -->
+          <span class="asset-status" :class="{ connected: isAssetConnected(asset.id) }"></span>
+
+          <div class="asset-info">
+            <div class="asset-title">
+              <span>{{ asset.title }}</span>
+            </div>
+          </div>
+
+          <div class="asset-action">
+            <n-button
+              text
+              size="tiny"
+              @click.stop="showTagInput(asset)"
+              title="添加标签"
+            >
+              <template #icon>
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                  <path d="M2 2h4l3 3-5 5L2 8V2z" stroke="currentColor" stroke-width="1" fill="none"/>
+                  <circle cx="8.5" cy="4.5" r="0.8" fill="currentColor"/>
+                </svg>
+              </template>
+            </n-button>
+          </div>
+
+          <!-- 标签 -->
+          <div v-if="appStore.getAssetTags(asset.id).length > 0" class="asset-tags">
+            <span
+              v-for="tag in appStore.getAssetTags(asset.id)"
+              :key="tag"
+              class="tag-chip"
+            >
+              {{ tag }}
+              <span class="close-btn" @click.stop="appStore.removeTag(asset.id, tag)">&times;</span>
+            </span>
+          </div>
+        </div>
       </div>
 
-      <AssetTree
-        v-else
-        :nodes="visibleTree"
-        :expanded-ids="expandedIds"
-        :force-expand="isSearching"
-        @toggle="toggleNode"
-        @open-asset="openTreeAsset"
-        @add-tag="showTagInput"
-      />
+      <div v-else>
+        <div v-if="visibleTree.length === 0 && !loading" class="empty-state">
+          <p>暂无 Linux 服务器</p>
+        </div>
+
+        <AssetTree
+          v-else
+          :nodes="visibleTree"
+          :expanded-ids="expandedIds"
+          :force-expand="isSearching"
+          @toggle="toggleNode"
+          @open-asset="openTreeAsset"
+          @add-tag="showTagInput"
+        />
+      </div>
     </div>
 
     <!-- 添加标签弹窗 -->
@@ -268,6 +337,10 @@ const errorMsg = ref('')
 const listBodyRef = ref(null)
 const expandedIds = ref({})
 
+// 拖拽状态
+const dragIndex = ref(-1)
+const dragOverIndex = ref(-1)
+
 // 标签弹窗
 const showTagModal = ref(false)
 const newTagValue = ref('')
@@ -312,6 +385,8 @@ const terminalColorSchemeTitle = computed(() => {
   return `终端配色: ${current?.name || '默认'}`
 })
 
+const layoutTitle = computed(() => appStore.assetLayout === 'flat' ? '切换到树状布局' : '切换到扁平布局')
+
 const previewColors = computed(() => {
   const scheme = getColorScheme(appStore.terminalColorScheme, appStore.theme)
   return {
@@ -326,6 +401,14 @@ const previewColors = computed(() => {
 
 function toggleTheme() {
   appStore.setTheme(appStore.theme === 'dark' ? 'light' : 'dark')
+}
+
+function toggleLayout() {
+  appStore.setAssetLayout(appStore.assetLayout === 'flat' ? 'tree' : 'flat')
+}
+
+function isAssetConnected(assetId) {
+  return appStore.tabs.some(t => t.assetId === assetId && t.connected)
 }
 
 function countAssets(nodes) {
@@ -425,15 +508,30 @@ const visibleTree = computed(() => {
 })
 
 const filteredAssets = computed(() => {
-  const ids = []
-  const walk = (nodes) => {
-    for (const node of nodes) {
-      if (node.type === 'asset') ids.push(node.assetId)
-      else walk(node.children || [])
+  if (appStore.assetLayout === 'flat') {
+    // 扁平布局：使用排序后的资产列表
+    let list = appStore.getOrderedAssets()
+    if (!searchQuery.value.trim()) return list
+
+    const query = searchQuery.value.trim().toLowerCase()
+    return list.filter(a => {
+      const title = (a.title || '').toLowerCase()
+      const address = (a.address || '').toLowerCase()
+      const tags = appStore.getAssetTags(a.id).join(' ').toLowerCase()
+      return title.includes(query) || address.includes(query) || tags.includes(query)
+    })
+  } else {
+    // 树状布局：从树中提取资产 ID
+    const ids = []
+    const walk = (nodes) => {
+      for (const node of nodes) {
+        if (node.type === 'asset') ids.push(node.assetId)
+        else walk(node.children || [])
+      }
     }
+    walk(visibleTree.value)
+    return [...new Set(ids)]
   }
-  walk(visibleTree.value)
-  return [...new Set(ids)]
 })
 
 function toggleNode(id) {
@@ -499,12 +597,69 @@ async function refreshAssets() {
   }
 }
 
+// ==================== 扁平布局拖拽排序 ====================
+function onDragStart(event, index) {
+  dragIndex.value = index
+  event.dataTransfer.effectAllowed = 'move'
+  event.target.classList.add('dragging')
+}
+
+function onDragOver(event, index) {
+  event.preventDefault()
+  dragOverIndex.value = index
+}
+
+function onDragLeave() {
+  dragOverIndex.value = -1
+}
+
+function onDrop(event, index) {
+  event.preventDefault()
+  if (dragIndex.value === -1 || dragIndex.value === index) return
+
+  const currentList = [...filteredAssets.value]
+  const [movedItem] = currentList.splice(dragIndex.value, 1)
+  currentList.splice(index, 0, movedItem)
+
+  // 更新完整排序
+  const allAssets = appStore.getOrderedAssets()
+  const filteredIds = new Set(filteredAssets.value.map(a => a.id))
+  const nonFiltered = allAssets.filter(a => !filteredIds.has(a.id))
+
+  const newFullOrder = []
+  let filteredIdx = 0
+  let nonFilteredIdx = 0
+
+  for (const a of allAssets) {
+    if (filteredIds.has(a.id)) {
+      newFullOrder.push(currentList[filteredIdx]?.id)
+      filteredIdx++
+    } else {
+      newFullOrder.push(nonFiltered[nonFilteredIdx]?.id)
+      nonFilteredIdx++
+    }
+  }
+
+  appStore.updateAssetOrder(newFullOrder.filter(Boolean))
+  dragOverIndex.value = -1
+}
+
+function onDragEnd(event) {
+  event.target.classList.remove('dragging')
+  dragIndex.value = -1
+  dragOverIndex.value = -1
+}
+
 // ==================== 标签管理 ====================
 function showTagInput(asset) {
-  currentTagAsset.value = {
-    id: asset.assetId || asset.id,
-    title: asset.name || asset.title,
-    address: asset.address
+  if (appStore.assetLayout === 'flat') {
+    currentTagAsset.value = asset
+  } else {
+    currentTagAsset.value = {
+      id: asset.assetId || asset.id,
+      title: asset.name || asset.title,
+      address: asset.address
+    }
   }
   newTagValue.value = ''
   showTagModal.value = true
@@ -658,7 +813,7 @@ onMounted(() => {
 .header-buttons {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
 }
 
 .server-count {
