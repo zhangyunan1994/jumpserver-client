@@ -4,7 +4,7 @@ version = "1.4.5"
 description = "JumpServer SSH 客户端工具"
 authors = ["you"]
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.89"
 
 [lib]
 name = "jump_server_client_lib"
@@ -26,7 +26,7 @@ sha2 = "0.10"
 base64 = "0.22"
 url = "2"
 dirs = "5"
-async-ssh2-russh = "0.3"
+russh = "0.63"
 anyhow = "1"
 thiserror = "2"
 log = "0.4"
