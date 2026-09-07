@@ -208,3 +208,11 @@ pnpm build:win
 - Windows：`JumpServerClient_<version>_x64-setup.exe`
 
 也可在 Actions 页面手动触发（`workflow_dispatch`）。
+
+## 参与贡献
+
+感谢所有做过贡献的人!
+
+<a href="https://github.com/zhangyunan1994/jumpserver-client/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=zhangyunan1994/jumpserver-client" />
+</a>
