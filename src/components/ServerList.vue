@@ -553,18 +553,12 @@ function expandRootNodes(flat) {
 }
 
 // 防止双击/快速连点同一资产时重复创建标签：
-// 树节点同时绑定 click 与 dblclick，若不加保护会开出多个 Tab 并建立多条 SSH 连接
+// 扁平列表绑定 click、树节点同时绑定 click 与 dblclick，若不加保护会开出多个 Tab 并建立多条 SSH 连接
 let lastOpenedAssetId = null
 let lastOpenedAt = 0
 const REOPEN_GUARD_MS = 400
 
-function openTreeAsset(node) {
-  const asset = appStore.assets.find(a => a.id === node.assetId) || {
-    id: node.assetId,
-    title: node.name,
-    address: node.address,
-    platform_type: 'linux'
-  }
+function openAsset(asset) {
   const now = Date.now()
   if (asset.id === lastOpenedAssetId && now - lastOpenedAt < REOPEN_GUARD_MS) {
     lastOpenedAt = now
@@ -573,6 +567,16 @@ function openTreeAsset(node) {
   lastOpenedAssetId = asset.id
   lastOpenedAt = now
   emit('openAsset', asset)
+}
+
+function openTreeAsset(node) {
+  const asset = appStore.assets.find(a => a.id === node.assetId) || {
+    id: node.assetId,
+    title: node.name,
+    address: node.address,
+    platform_type: 'linux'
+  }
+  openAsset(asset)
 }
 
 async function refreshAssets() {
