@@ -829,6 +829,12 @@ fn get_log_path() -> PathBuf {
 
 fn init_logger() {
     let log_path = get_log_path();
+    use std::fs::OpenOptions;
+    let log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .unwrap();
     let _ = fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -840,7 +846,7 @@ fn init_logger() {
             ))
         })
         .level(log::LevelFilter::Info)
-        .chain(fern::Dispatch::new().chain(std::fs::File::create(&log_path).unwrap()))
+        .chain(fern::Dispatch::new().chain(log_file))
         .apply();
 }
 
