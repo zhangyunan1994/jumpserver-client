@@ -659,7 +659,7 @@ async fn connect_to_asset(
         &key_id,
         &secret,
         "GET",
-        "/api/v1/terminal/endpoints/smart/",
+        "/api/v1/terminal/endpoints/smart/?protocol=ssh",
         None,
     )
     .await
