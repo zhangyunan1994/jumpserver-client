@@ -637,10 +637,35 @@ async fn connect_to_asset(
         .unwrap_or("")
         .to_string();
 
-    // 3. 解析 SSH 主机信息
-    let parsed = Url::parse(jms_url.trim_end_matches('/')).map_err(|e| e.to_string())?;
-    let ssh_host = parsed.host_str().ok_or("无法解析主机名")?;
-    let ssh_port = 2222u16;
+    // 3. 获取 Endpoint 信息（SSH 端口等）
+    let endpoint = jms_request(
+        &jms_url,
+        &key_id,
+        &secret,
+        "GET",
+        "/api/v1/terminal/endpoints/smart/",
+        None,
+    )
+    .await?;
+
+    // 优先使用 endpoint 中的 host，否则从 URL 解析
+    let ssh_host = endpoint
+        .get("host")
+        .and_then(|h| h.as_str())
+        .filter(|h| !h.is_empty())
+        .map(|h| h.to_string())
+        .or_else(|| {
+            Url::parse(jms_url.trim_end_matches('/'))
+                .ok()
+                .and_then(|u| u.host_str().map(|h| h.to_string()))
+        })
+        .ok_or("无法获取主机名")?;
+
+    let ssh_port = endpoint
+        .get("ssh_port")
+        .and_then(|p| p.as_u64())
+        .unwrap_or(2222) as u16;
+
     let ssh_user = format!("JMS-{}", connection_id);
 
     // 4. 建立 SSH 连接
@@ -648,7 +673,7 @@ async fn connect_to_asset(
         &state,
         app,
         &tab_id,
-        ssh_host,
+        &ssh_host,
         ssh_port,
         &ssh_user,
         &password,
