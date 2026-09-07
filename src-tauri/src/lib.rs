@@ -1,7 +1,9 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use async_ssh2_russh::{russh::Disconnect, AsyncChannel, NoCheckHandler, ReadStream};
+use russh::client::{self, Handle, Msg};
+use russh::keys::PublicKeyOrCertificate;
+use russh::{ChannelMsg, ChannelWriteHalf, Disconnect};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
 use hmac::{Hmac, Mac};
@@ -13,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_store::StoreExt;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Mutex};
 use url::Url;
 
@@ -215,11 +217,21 @@ async fn jms_request(
 
 // ==================== SSH 连接管理 ====================
 
+// 不校验服务器公钥的 Handler（沿用原 async-ssh2-russh::NoCheckHandler 语义，已知安全债 #1）
+struct NoCheckHandler;
+impl client::Handler for NoCheckHandler {
+    type Error = russh::Error;
+
+    async fn check_server_key(&mut self, _: &PublicKeyOrCertificate) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+}
+
 struct SshConnection {
     write_tx: mpsc::UnboundedSender<Vec<u8>>,
     resize_tx: mpsc::UnboundedSender<(u32, u32)>,
     // 保存 russh 会话句柄，断开时显式发送 disconnect，避免 socket 泄漏
-    handle: async_ssh2_russh::russh::client::Handle<NoCheckHandler>,
+    handle: Handle<NoCheckHandler>,
 }
 
 #[derive(Default)]
@@ -256,49 +268,40 @@ async fn disconnect_tab_ssh(state: &AppState, tab_id: &str) {
 }
 
 async fn spawn_ssh_reader(
-    mut reader: ReadStream,
+    mut stdout_rx: mpsc::UnboundedReceiver<Vec<u8>>,
     state: Arc<AppState>,
     app: AppHandle,
     tab_id: String,
 ) {
-    let mut buf = [0u8; 4096];
     // 保存因块边界被截断的不完整 UTF-8 尾部，与下一块拼接后再解码，
-    // 避免中文等多字节字符被 4096 字节分块切断后输出 U+FFFD 乱码
+    // 避免中文等多字节字符被分块切断后输出 U+FFFD 乱码。
+    // recv() 返回 None = stdout 管道关闭（通道已关，EOF），退出并触发兜底清理
     let mut pending: Vec<u8> = Vec::new();
-    loop {
-        match reader.read(&mut buf).await {
-            Ok(0) => break,
-            Ok(n) => {
-                pending.extend_from_slice(&buf[..n]);
-                match std::str::from_utf8(&pending) {
-                    Ok(s) => {
-                        let _ = send_to_tab(&app, &tab_id, "terminal-data", s).await;
-                        pending.clear();
-                    }
-                    Err(e) => {
-                        // valid_up_to 之前的字节保证为合法 UTF-8，先输出
-                        let valid = e.valid_up_to();
-                        if valid > 0 {
-                            let s = std::str::from_utf8(&pending[..valid]).unwrap_or("");
-                            let _ = send_to_tab(&app, &tab_id, "terminal-data", s).await;
-                        }
-                        match e.error_len() {
-                            // None：尾部只是不完整（被块边界切断），保留待下一块拼接
-                            None => {
-                                pending.drain(..valid);
-                            }
-                            // Some(n)：确属非法字节（非截断），丢弃并以替换符占位（与 from_utf8_lossy 行为一致）
-                            Some(bad) => {
-                                let _ = send_to_tab(&app, &tab_id, "terminal-data", "\u{FFFD}").await;
-                                pending.drain(..valid + bad);
-                            }
-                        }
-                    }
-                }
+    while let Some(chunk) = stdout_rx.recv().await {
+        pending.extend_from_slice(&chunk);
+        match std::str::from_utf8(&pending) {
+            Ok(s) => {
+                let _ = send_to_tab(&app, &tab_id, "terminal-data", s).await;
+                pending.clear();
             }
             Err(e) => {
-                let _ = send_to_tab(&app, &tab_id, "terminal-data", &format!("\r\n\x1b[31m读取错误: {}\x1b[0m\r\n", e)).await;
-                break;
+                // valid_up_to 之前的字节保证为合法 UTF-8，先输出
+                let valid = e.valid_up_to();
+                if valid > 0 {
+                    let s = std::str::from_utf8(&pending[..valid]).unwrap_or("");
+                    let _ = send_to_tab(&app, &tab_id, "terminal-data", s).await;
+                }
+                match e.error_len() {
+                    // None：尾部只是不完整（被块边界切断），保留待下一块拼接
+                    None => {
+                        pending.drain(..valid);
+                    }
+                    // Some(n)：确属非法字节（非截断），丢弃并以替换符占位（与 from_utf8_lossy 行为一致）
+                    Some(bad) => {
+                        let _ = send_to_tab(&app, &tab_id, "terminal-data", "\u{FFFD}").await;
+                        pending.drain(..valid + bad);
+                    }
+                }
             }
         }
     }
@@ -313,7 +316,7 @@ async fn spawn_ssh_reader(
 }
 
 async fn spawn_ssh_writer(
-    channel: AsyncChannel,
+    write_half: ChannelWriteHalf<Msg>,
     state: Arc<AppState>,
     mut write_rx: mpsc::UnboundedReceiver<Vec<u8>>,
     mut resize_rx: mpsc::UnboundedReceiver<(u32, u32)>,
@@ -326,7 +329,7 @@ async fn spawn_ssh_writer(
             msg = write_rx.recv() => {
                 match msg {
                     Some(data) => {
-                        let mut stdin = channel.stdin();
+                        let mut stdin = write_half.make_writer();
                         if stdin.write_all(&data).await.is_err() {
                             let _ = send_to_tab(&app, &tab_id, "ssh-status", "error").await;
                             break;
@@ -338,7 +341,7 @@ async fn spawn_ssh_writer(
             size = resize_rx.recv() => {
                 match size {
                     Some((cols, rows)) => {
-                        if channel.window_change(cols, rows, 0, 0).await.is_err() {
+                        if write_half.window_change(cols, rows, 0, 0).await.is_err() {
                             let _ = send_to_tab(&app, &tab_id, "ssh-status", "error").await;
                             break;
                         }
@@ -371,15 +374,15 @@ async fn connect_ssh(
 
     // 定期 keepalive：防止 NAT/防火墙静默断链或服务端超时踢掉空闲会话；
     // keepalive 失败会终止会话并触发 reader EOF 清理链路，前端状态点同步变灰
-    let config = Arc::new(async_ssh2_russh::russh::client::Config {
+    let config = Arc::new(client::Config {
         keepalive_interval: Some(std::time::Duration::from_secs(30)),
         ..Default::default()
     });
-    let mut handle = async_ssh2_russh::russh::client::connect(config, addr, NoCheckHandler)
+    let mut handle = client::connect(config, addr, NoCheckHandler)
         .await
         .map_err(|e| format!("SSH connect error: {}", e))?;
 
-    let channel = match authenticate_and_open_shell(&mut handle, username, password, cols, rows).await {
+    let (stdout_rx, channel_write) = match authenticate_and_open_shell(&mut handle, username, password, cols, rows).await {
         Ok(c) => c,
         Err(e) => {
             // 认证/建链失败时显式断开会话，避免 socket 泄漏
@@ -390,11 +393,10 @@ async fn connect_ssh(
         }
     };
 
-    // 必须在 shell 之前获取 stdout，否则可能收不到数据
-    let stdout = channel.stdout();
+    // stdout 消息泵已在 authenticate_and_open_shell 内启动：read_half 持有通道接收端，
+    // 从建链到返回之间到达的数据会先缓冲，无丢失风险
     let (write_tx, write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let (resize_tx, resize_rx) = mpsc::unbounded_channel::<(u32, u32)>();
-
     let conn = SshConnection {
         write_tx,
         resize_tx,
@@ -406,21 +408,23 @@ async fn connect_ssh(
     drop(conns);
 
     // 启动读写任务；任务退出时自行兜底清理连接表（幂等）
-    tokio::spawn(spawn_ssh_reader(stdout, state.clone(), app.clone(), tab_id.to_string()));
-    tokio::spawn(spawn_ssh_writer(channel, state.clone(), write_rx, resize_rx, app.clone(), tab_id.to_string()));
+    tokio::spawn(spawn_ssh_reader(stdout_rx, state.clone(), app.clone(), tab_id.to_string()));
+    tokio::spawn(spawn_ssh_writer(channel_write, state.clone(), write_rx, resize_rx, app.clone(), tab_id.to_string()));
 
     let _ = send_to_tab(&app, tab_id, "ssh-status", "connected").await;
     Ok(())
 }
 
-// 完成认证并打开 shell 通道；任一步失败由调用方负责显式断开会话
+// 完成认证并打开 shell 通道；任一步失败由调用方负责显式断开会话。
+// 返回 (stdout 字节流接收端, 通道写半端)：读半端由内部消息泵转为字节流，
+// Data 与 ExtendedData 一并送入同一管道（PTY 模式下 stderr 本就并入 tty）
 async fn authenticate_and_open_shell(
-    handle: &mut async_ssh2_russh::russh::client::Handle<NoCheckHandler>,
+    handle: &mut Handle<NoCheckHandler>,
     username: &str,
     password: &str,
     cols: u32,
     rows: u32,
-) -> Result<AsyncChannel, String> {
+) -> Result<(mpsc::UnboundedReceiver<Vec<u8>>, ChannelWriteHalf<Msg>), String> {
     let auth = handle
         .authenticate_password(username, password)
         .await
@@ -429,11 +433,10 @@ async fn authenticate_and_open_shell(
         return Err("SSH 认证失败".to_string());
     }
 
-    let russh_channel = handle
+    let channel = handle
         .channel_open_session()
         .await
         .map_err(|e| format!("SSH channel error: {}", e))?;
-    let channel = AsyncChannel::from(russh_channel);
     channel
         .request_pty(true, "xterm-256color", cols, rows, 0, 0, &[])
         .await
@@ -442,7 +445,25 @@ async fn authenticate_and_open_shell(
         .request_shell(true)
         .await
         .map_err(|e| format!("SSH shell error: {}", e))?;
-    Ok(channel)
+
+    let (mut read_half, write_half) = channel.split();
+    let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    // 消息泵：read_half.wait() 返回 None（通道关闭）时任务结束、tx 被 drop，
+    // 下游 reader 的 recv() 随即返回 None，等价于原 ReadStream 的 EOF 语义
+    tokio::spawn(async move {
+        while let Some(msg) = read_half.wait().await {
+            let bytes = match msg {
+                ChannelMsg::Data { data } => data,
+                ChannelMsg::ExtendedData { data, .. } => data,
+                _ => continue,
+            };
+            if tx.send(bytes.to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+
+    Ok((rx, write_half))
 }
 
 // ==================== Tauri 命令 ====================

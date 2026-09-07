@@ -89,6 +89,7 @@ html, body {
   padding: 6px 8px;
 }
 .xterm-viewport {
+  background-color: transparent !important;
   scrollbar-width: thin;
 }
 .xterm-viewport::-webkit-scrollbar {
