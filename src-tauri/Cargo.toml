@@ -30,6 +30,7 @@ russh = "0.63"
 anyhow = "1"
 thiserror = "2"
 log = "0.4"
+fern = "0.7"
 
 [profile.release]
 opt-level = 3

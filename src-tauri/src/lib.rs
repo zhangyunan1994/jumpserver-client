@@ -205,14 +205,24 @@ async fn jms_request(
         req = req.json(&b);
     }
 
-    let res = req.send().await.map_err(|e| format!("request error: {}", e))?;
+    let res = req.send().await.map_err(|e| {
+        log::error!("[api] {} {} 请求失败: {}", method, api_path, e);
+        format!("request error: {}", e)
+    })?;
     let status = res.status();
-    let text = res.text().await.map_err(|e| format!("read body error: {}", e))?;
+    let text = res.text().await.map_err(|e| {
+        log::error!("[api] {} {} 读取响应失败: {}", method, api_path, e);
+        format!("read body error: {}", e)
+    })?;
     // 非 2xx（如 401 密钥错误、500 服务端异常）直接给出明确错误，而非误导性的 JSON parse error
     if !status.is_success() {
+        log::error!("[api] {} {} 返回 {}: {}", method, api_path, status.as_u16(), truncate_utf8_safe(&text, 500));
         return Err(format!("JumpServer API 返回 {}：{}", status.as_u16(), truncate_utf8_safe(&text, 200)));
     }
-    serde_json::from_str(&text).map_err(|e| format!("JSON parse error: {} | {}", e, truncate_utf8_safe(&text, 200)))
+    serde_json::from_str(&text).map_err(|e| {
+        log::error!("[api] {} {} JSON 解析失败: {} | {}", method, api_path, e, truncate_utf8_safe(&text, 500));
+        format!("JSON parse error: {} | {}", e, truncate_utf8_safe(&text, 200))
+    })
 }
 
 // ==================== SSH 连接管理 ====================
@@ -474,10 +484,13 @@ async fn validate_credentials(
     key_id: String,
     secret: String,
 ) -> Result<Value, String> {
+    log::info!("[auth] 验证凭证, url={}", jms_url);
     let user = jms_request(&jms_url, &key_id, &secret, "GET", "/api/v1/users/profile/", None).await?;
     if user.get("id").is_none() {
+        log::warn!("[auth] 获取用户信息失败");
         return Ok(json!({ "success": false, "error": "获取用户信息失败，请确认连接信息是否正确" }));
     }
+    log::info!("[auth] 凭证验证成功, user={}", user.get("username").and_then(|v| v.as_str()).unwrap_or(""));
     Ok(json!({
         "success": true,
         "user": {
@@ -519,7 +532,9 @@ async fn fetch_asset_tree_items(
 
 #[tauri::command]
 async fn get_assets(jms_url: String, key_id: String, secret: String) -> Result<Value, String> {
+    log::info!("[assets] 获取资产列表");
     let items = fetch_asset_tree_items(&jms_url, &key_id, &secret).await?;
+    log::info!("[assets] 获取到 {} 条资产树数据", items.len());
 
     let mut assets: Vec<Asset> = Vec::new();
     let mut tree: Vec<AssetTreeItem> = Vec::new();
@@ -589,6 +604,7 @@ async fn connect_to_asset(
     cols: u32,
     rows: u32,
 ) -> Result<Value, String> {
+    log::info!("[ssh] 连接资产 asset_id={}, tab_id={}", asset_id, tab_id);
     // 1. 获取资产连接账号
     let account = match jms_request(
         &jms_url,
@@ -638,7 +654,7 @@ async fn connect_to_asset(
         .to_string();
 
     // 3. 获取 Endpoint 信息（SSH 端口等），失败时 fallback 到默认值
-    let endpoint = jms_request(
+    let endpoint = match jms_request(
         &jms_url,
         &key_id,
         &secret,
@@ -647,7 +663,18 @@ async fn connect_to_asset(
         None,
     )
     .await
-    .ok();
+    {
+        Ok(ep) => {
+            log::info!("[ssh] 获取 endpoint 成功: host={}, ssh_port={}",
+                ep.get("host").and_then(|v| v.as_str()).unwrap_or(""),
+                ep.get("ssh_port").and_then(|v| v.as_u64()).unwrap_or(2222));
+            Some(ep)
+        }
+        Err(e) => {
+            log::warn!("[ssh] 获取 endpoint 失败, 使用默认值: {}", e);
+            None
+        }
+    };
 
     // 从 URL 解析主机名
     let parsed = Url::parse(jms_url.trim_end_matches('/')).map_err(|e| e.to_string())?;
@@ -675,6 +702,7 @@ async fn connect_to_asset(
     let ssh_user = format!("JMS-{}", connection_id);
 
     // 4. 建立 SSH 连接
+    log::info!("[ssh] 建立连接 host={}, port={}, user={}", ssh_host, ssh_port, ssh_user);
     connect_ssh(
         &state,
         app,
@@ -688,6 +716,7 @@ async fn connect_to_asset(
     )
     .await?;
 
+    log::info!("[ssh] 连接成功 asset_id={}, tab_id={}", asset_id, tab_id);
     Ok(json!({ "success": true, "message": format!("已连接到资产 {}", asset_id) }))
 }
 
@@ -789,10 +818,39 @@ async fn save_settings(app: AppHandle, settings: Value) -> Result<Value, String>
     Ok(json!({ "success": true }))
 }
 
+// ==================== 日志初始化 ====================
+
+fn get_log_path() -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let config_dir = home.join(".jumpserverclient");
+    let _ = std::fs::create_dir_all(&config_dir);
+    config_dir.join("app.log")
+}
+
+fn init_logger() {
+    let log_path = get_log_path();
+    let _ = fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{}][{}][{}] {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                record.level(),
+                record.target(),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Info)
+        .chain(fern::Dispatch::new().chain(std::fs::File::create(&log_path).unwrap()))
+        .apply();
+}
+
 // ==================== 应用入口 ====================
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    init_logger();
+    log::info!("应用启动");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(Arc::new(AppState::default()))
