@@ -795,7 +795,7 @@ async fn get_settings(app: AppHandle) -> Result<Value, String> {
         .store(&path)
         .map_err(|e| format!("open store error: {}", e))?;
     let mut settings = json!({});
-    for key in ["jms_url", "key_id", "secret", "user_info", "asset_tags", "asset_order", "asset_layout", "sidebar_width", "theme", "terminal_color_scheme", "quick_commands"] {
+    for key in ["jms_url", "key_id", "secret", "user_info", "asset_tags", "asset_order", "asset_layout", "sidebar_width", "theme", "terminal_color_scheme", "quick_commands", "app_icon"] {
         if let Some(value) = store.get(key) {
             settings[key] = value;
         }
@@ -850,6 +850,193 @@ fn init_logger() {
         .apply();
 }
 
+// ==================== 图标切换 ====================
+
+#[cfg(target_os = "macos")]
+fn set_macos_dock_icon(icon_bytes: &[u8]) -> Result<(), String> {
+    use objc::{msg_send, sel, sel_impl, class};
+    use std::os::raw::c_void;
+
+    unsafe {
+        let app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
+
+        let ns_data: *mut objc::runtime::Object = msg_send![class!(NSData),
+            dataWithBytes:icon_bytes.as_ptr() as *const c_void
+            length:icon_bytes.len() as u64
+        ];
+
+        let alloc: *mut objc::runtime::Object = msg_send![class!(NSImage), alloc];
+        let ns_image: *mut objc::runtime::Object = msg_send![alloc, initWithData:ns_data];
+
+        let _: () = msg_send![app, setApplicationIconImage:ns_image];
+    }
+    Ok(())
+}
+
+fn get_icon_path(app: &AppHandle, icon_name: &str) -> Result<PathBuf, String> {
+    // 优先从 resource_dir 查找（打包后）
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let path = resource_dir.join("icons").join(icon_name);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+    // fallback 到当前目录（dev 模式）
+    let path = std::env::current_dir()
+        .map_err(|e| e.to_string())?
+        .join("icons")
+        .join(icon_name);
+    if path.exists() {
+        Ok(path)
+    } else {
+        Err(format!("图标文件不存在: {:?}", path))
+    }
+}
+
+#[tauri::command]
+async fn set_app_icon(app: AppHandle, icon_name: String, icon_data: Vec<u8>) -> Result<Value, String> {
+    log::info!("[icon] set_app_icon called: {}, bytes={}", icon_name, icon_data.len());
+
+    let icon_bytes = if !icon_data.is_empty() {
+        icon_data
+    } else {
+        // fallback: 从文件读取
+        let icon_path = get_icon_path(&app, &icon_name)?;
+        log::info!("[icon] fallback file path: {:?}", icon_path);
+        std::fs::read(&icon_path).map_err(|e| format!("读取图标失败: {}", e))?
+    };
+
+    // 切换托盘图标
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let image = tauri::image::Image::from_bytes(&icon_bytes)
+            .map_err(|e| format!("解析图标失败: {}", e))?;
+        tray.set_icon(Some(image))
+            .map_err(|e| format!("设置托盘图标失败: {}", e))?;
+        log::info!("[icon] tray icon set");
+    } else {
+        log::warn!("[icon] tray not found");
+    }
+
+    // macOS Dock 图标
+    #[cfg(target_os = "macos")]
+    {
+        set_macos_dock_icon(&icon_bytes)?;
+        log::info!("[icon] dock icon set");
+    }
+
+    // macOS: 替换 .app bundle 内的 icns，让 Finder/启动台图标也跟随切换
+    #[cfg(target_os = "macos")]
+    {
+        replace_app_bundle_icns(&app, &icon_name);
+    }
+
+    // 持久化
+    let store_path = get_store_path();
+    let store = app.store(&store_path).map_err(|e| e.to_string())?;
+    store.set("app_icon", serde_json::Value::String(icon_name.clone()));
+    store.save().map_err(|e| format!("保存设置失败: {}", e))?;
+
+    log::info!("[icon] 图标切换为: {}", icon_name);
+    Ok(json!({ "success": true }))
+}
+
+/// 把选中的 .icns 写入正在运行的 .app 包（Contents/Resources/icon.icns），
+/// 并 touch .app 目录让 Finder 刷新图标缓存。
+/// 注意：修改 bundle 会破坏 adhoc 代码签名，仅适用于本地自签应用。
+#[cfg(target_os = "macos")]
+fn replace_app_bundle_icns(app: &AppHandle, icon_name: &str) {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("[icon] 获取 exe 路径失败: {}", e);
+            return;
+        }
+    };
+    // exe = /path/xxx.app/Contents/MacOS/JumpServerClient
+    let contents_dir = match exe.parent().and_then(|m| m.parent()) {
+        Some(c) => c.to_path_buf(),
+        None => return,
+    };
+    if contents_dir.file_name().map(|n| n != "Contents").unwrap_or(true) {
+        return;
+    }
+    let app_dir = match contents_dir.parent() {
+        Some(d) => d.to_path_buf(),
+        None => return,
+    };
+    if !app_dir.to_string_lossy().ends_with(".app") {
+        log::info!("[icon] 非 .app 运行环境（dev），跳过 bundle icns 替换");
+        return;
+    }
+
+    let icns_name = format!("{}.icns", icon_name.trim_end_matches(".png"));
+    // Tauri 把 "../icons/*" 资源映射到 Resources/_up_/icons/
+    let candidates = [
+        contents_dir.join("Resources").join("_up_").join("icons").join(&icns_name),
+        contents_dir.join("Resources").join("icons").join(&icns_name),
+    ];
+    let src = match candidates.iter().find(|p| p.exists()) {
+        Some(p) => p.clone(),
+        None => {
+            // 兜底：resource_dir
+            if let Ok(rd) = app.path().resource_dir() {
+                let p = rd.join("_up_").join("icons").join(&icns_name);
+                if p.exists() { p } else {
+                    log::warn!("[icon] 找不到资源 icns: {} (候选路径均不存在)", icns_name);
+                    return;
+                }
+            } else {
+                log::warn!("[icon] 找不到资源 icns: {}", icns_name);
+                return;
+            }
+        }
+    };
+
+    let target_icns = contents_dir.join("Resources").join("icon.icns");
+    if !target_icns.exists() {
+        log::warn!("[icon] 目标 icns 不存在: {:?}", target_icns);
+        return;
+    }
+    if let Err(e) = std::fs::copy(&src, &target_icns) {
+        log::warn!("[icon] 替换 .app icns 失败: {}", e);
+        return;
+    }
+    // touch .app 目录触发 Finder 图标缓存刷新
+    let _ = std::process::Command::new("touch").arg(&app_dir).status();
+    let _ = std::process::Command::new("touch").arg(&target_icns).status();
+    log::info!("[icon] .app bundle icns 已替换为 {}", icns_name);
+}
+
+async fn restore_app_icon(app: &AppHandle) -> Result<(), String> {
+    let store_path = get_store_path();
+    let store = app.store(&store_path).map_err(|e| e.to_string())?;
+    let icon_name = store.get("app_icon")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "jumpservershellapp.png".to_string());
+
+    if icon_name == "jumpservershellapp.png" {
+        return Ok(());
+    }
+
+    let icon_path = get_icon_path(app, &icon_name)?;
+    let icon_bytes = std::fs::read(&icon_path).map_err(|e| e.to_string())?;
+
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        if let Ok(image) = tauri::image::Image::from_bytes(&icon_bytes) {
+            let _ = tray.set_icon(Some(image));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = set_macos_dock_icon(&icon_bytes);
+        replace_app_bundle_icns(app, &icon_name);
+    }
+
+    log::info!("[icon] 启动恢复图标: {}", icon_name);
+    Ok(())
+}
+
 // ==================== 应用入口 ====================
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -860,6 +1047,17 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(Arc::new(AppState::default()))
+        .setup(|app| {
+            use tauri::tray::TrayIconBuilder;
+            let _tray = TrayIconBuilder::with_id("main-tray")
+                .tooltip("JumpServer Client")
+                .build(app)?;
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = restore_app_icon(&handle).await;
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             validate_credentials,
             get_assets,
@@ -870,6 +1068,7 @@ pub fn run() {
             terminal_resize,
             get_settings,
             save_settings,
+            set_app_icon,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

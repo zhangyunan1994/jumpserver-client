@@ -3,12 +3,7 @@
     <div class="setup-card">
       <div class="setup-header">
         <div class="setup-logo">
-          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-            <rect x="4" y="8" width="40" height="28" rx="4" stroke="#007acc" stroke-width="2" fill="none"/>
-            <line x1="12" y1="24" x2="36" y2="24" stroke="#007acc" stroke-width="2" opacity="0.6"/>
-            <line x1="12" y1="30" x2="28" y2="30" stroke="#007acc" stroke-width="2" opacity="0.3"/>
-            <circle cx="40" cy="10" r="3" fill="#4ec9b0"/>
-          </svg>
+          <img :src="getIconSrc(appStore.appIcon)" alt="JumpServer Client" width="48" height="48" style="border-radius: 8px;" />
         </div>
         <h1>JumpServer Client</h1>
         <p>请输入 JumpServer 的连接信息以开始使用</p>
@@ -64,6 +59,7 @@
 import { ref, reactive } from 'vue'
 import { NForm, NFormItem, NInput, NButton, NAlert, useMessage } from 'naive-ui'
 import { useAppStore } from '../stores/app'
+import { getIconSrc } from '../utils/icons'
 
 const emit = defineEmits(['configured'])
 const message = useMessage()

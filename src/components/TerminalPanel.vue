@@ -49,11 +49,7 @@
       <!-- 无 Tab 时的欢迎页 -->
       <div v-if="tabs.length === 0" class="welcome-page">
         <div class="welcome-icon">
-          <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
-            <rect x="4" y="8" width="56" height="40" rx="4" stroke="currentColor" stroke-width="1.5" fill="none"/>
-            <line x1="16" y1="32" x2="48" y2="32" stroke="currentColor" stroke-width="1.5" opacity="0.5"/>
-            <line x1="16" y1="40" x2="40" y2="40" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
-          </svg>
+          <img :src="getIconSrc(appStore.appIcon)" alt="JumpServer Client" width="64" height="64" style="border-radius: 12px;" />
         </div>
         <p class="welcome-text">在左侧选择一个 Linux 服务器开始连接</p>
         <p class="welcome-hint">点击服务器将创建新标签页，支持同时连接多台服务器</p>
@@ -82,6 +78,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { useAppStore } from '../stores/app'
 import TerminalTabBar from './TerminalTabBar.vue'
 import { getColorScheme } from '../styles/terminal-color-schemes'
+import { getIconSrc } from '../utils/icons'
 import '@xterm/xterm/css/xterm.css'
 
 const appStore = useAppStore()

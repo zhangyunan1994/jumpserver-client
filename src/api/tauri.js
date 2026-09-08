@@ -45,7 +45,11 @@ export const tauriAPI = {
     invoke('get_settings'),
 
   saveSettings: (settings) =>
-    invoke('save_settings', { settings })
+    invoke('save_settings', { settings }),
+
+  // ==================== 图标 ====================
+  setAppIcon: (iconName, iconData) =>
+    invoke('set_app_icon', { iconName, iconData }),
 }
 
 window.electronAPI = tauriAPI
