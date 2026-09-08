@@ -93,6 +93,7 @@ export const useAppStore = defineStore('app', () => {
   // ==================== 主题设置 ====================
   const theme = ref('dark') // 'dark' 或 'light'
   const terminalColorScheme = ref('default') // 终端配色方案
+  const appIcon = ref('jumpservershellapp.png') // 应用图标
 
   // ==================== 设置持久化 ====================
   function setSettings(settings) {
@@ -105,6 +106,7 @@ export const useAppStore = defineStore('app', () => {
     if (settings.asset_layout) assetLayout.value = settings.asset_layout
     if (settings.theme) theme.value = settings.theme
     if (settings.terminal_color_scheme) terminalColorScheme.value = settings.terminal_color_scheme
+    if (settings.app_icon) appIcon.value = settings.app_icon
     if (settings.quick_commands) quickCommands.value = settings.quick_commands
   }
 
@@ -122,6 +124,7 @@ export const useAppStore = defineStore('app', () => {
     activeTabId.value = null
     theme.value = 'dark'
     terminalColorScheme.value = 'default'
+    appIcon.value = 'jumpservershellapp.png'
     quickCommands.value = []
   }
 
@@ -230,6 +233,17 @@ export const useAppStore = defineStore('app', () => {
     await window.electronAPI.saveSettings({ terminal_color_scheme: scheme })
   }
 
+  async function setAppIcon(iconName) {
+    appIcon.value = iconName
+    try {
+      const { getIconBytes } = await import('../utils/icons')
+      const iconData = await getIconBytes(iconName)
+      await window.electronAPI.setAppIcon(iconName, iconData)
+    } catch (e) {
+      console.error('[setAppIcon] error:', e)
+    }
+  }
+
   return {
     // 配置
     jmsUrl, keyId, secret,
@@ -247,6 +261,7 @@ export const useAppStore = defineStore('app', () => {
     // 主题
     theme, setTheme,
     terminalColorScheme, setTerminalColorScheme,
+    appIcon, setAppIcon,
     // 快捷指令
     quickCommands,
     addQuickCommand, updateQuickCommand, removeQuickCommand,

@@ -97,7 +97,7 @@ onBeforeUnmount(() => {
 }
 
 .resize-handle {
-  width: 6px;
+  width: 4px;
   height: 100%;
   cursor: col-resize;
   flex-shrink: 0;

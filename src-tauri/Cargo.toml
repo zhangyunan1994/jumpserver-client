@@ -1,6 +1,6 @@
 [package]
 name = "JumpServerClient"
-version = "1.4.5"
+version = "1.5.0"
 description = "JumpServer SSH 客户端工具"
 authors = ["you"]
 edition = "2021"
@@ -30,6 +30,11 @@ russh = "0.63"
 anyhow = "1"
 thiserror = "2"
 log = "0.4"
+fern = "0.7"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
 
 [profile.release]
 opt-level = 3

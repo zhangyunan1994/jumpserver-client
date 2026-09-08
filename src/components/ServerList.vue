@@ -105,6 +105,30 @@
           </svg>
         </template>
       </n-button>
+      <n-popover trigger="click" placement="bottom-end">
+        <template #trigger>
+          <n-button text size="tiny" class="icon-btn" title="切换图标">
+            <template #icon>
+              <img :src="getIconSrc(appStore.appIcon)" alt="icon" width="14" height="14" style="border-radius: 2px;" />
+            </template>
+          </n-button>
+        </template>
+        <div class="icon-picker">
+          <div class="icon-picker-title">选择应用图标</div>
+          <div class="icon-picker-grid">
+            <div
+              v-for="icon in availableIcons"
+              :key="icon.name"
+              class="icon-picker-item"
+              :class="{ active: appStore.appIcon === icon.name }"
+              @click="appStore.setAppIcon(icon.name)"
+            >
+              <img :src="getIconSrc(icon.name)" :alt="icon.label" width="48" height="48" />
+              <span class="icon-picker-label">{{ icon.label }}</span>
+            </div>
+          </div>
+        </div>
+      </n-popover>
       <n-button text size="tiny" type="error" @click="$emit('logout')" class="logout-btn">
         退出
       </n-button>
@@ -326,6 +350,7 @@ import AssetTree from './AssetTree.vue'
 import { NInput, NButton, NSpin, NModal, NForm, NFormItem, NSelect, NPopover, useMessage } from 'naive-ui'
 import { useAppStore } from '../stores/app'
 import { getAllColorSchemes, getColorScheme } from '../styles/terminal-color-schemes'
+import { getIconSrc } from '../utils/icons'
 
 const emit = defineEmits(['logout', 'openAsset'])
 const message = useMessage()
@@ -501,6 +526,15 @@ const nestedTree = computed(() => {
   }))
 })
 const isSearching = computed(() => !!searchQuery.value.trim())
+
+const availableIcons = [
+  { name: 'jumpservershellapp.png', label: '默认' },
+  { name: 'jumpservershellapp1.png', label: '图标 1' },
+  { name: 'jumpservershellapp2.png', label: '图标 2' },
+  { name: 'jumpservershellapp3.png', label: '图标 3' },
+  { name: 'jumpservershellapp4.png', label: '图标 4' }
+]
+
 const visibleTree = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
   if (!query) return nestedTree.value
@@ -866,6 +900,59 @@ onMounted(() => {
 .theme-btn {
   flex-shrink: 0;
   font-size: 11px;
+}
+
+.icon-btn {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 0 4px;
+}
+
+.icon-picker {
+  padding: 8px;
+  min-width: 200px;
+}
+
+.icon-picker-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.icon-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.icon-picker-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.icon-picker-item:hover {
+  background: var(--hover-bg);
+}
+
+.icon-picker-item.active {
+  background: var(--primary-bg);
+  box-shadow: inset 0 0 0 2px var(--primary-color);
+}
+
+.icon-picker-item img {
+  border-radius: 4px;
+}
+
+.icon-picker-label {
+  font-size: 10px;
+  color: var(--text-secondary);
 }
 
 .color-scheme-btn {
