@@ -459,6 +459,14 @@ function pruneEmpty(nodes) {
   return result
 }
 
+const treeNameCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
+
+function sortTreeByName(nodes) {
+  return nodes
+    .map(node => ({ ...node, children: sortTreeByName(node.children || []) }))
+    .sort((a, b) => treeNameCollator.compare(a.name || '', b.name || ''))
+}
+
 function nestTree(flat) {
   const items = (flat || []).map((node, index) => ({
     id: node.id,
@@ -513,8 +521,8 @@ function filterTree(nodes, query) {
 
 const nestedTree = computed(() => {
   const nested = nestTree(appStore.assetTree)
-  if (nested.length) return nested
-  return (appStore.assets || []).map(asset => ({
+  if (nested.length) return sortTreeByName(nested)
+  return sortTreeByName((appStore.assets || []).map(asset => ({
     id: asset.id,
     parentId: '',
     name: asset.title || asset.address || '未命名',
@@ -523,7 +531,7 @@ const nestedTree = computed(() => {
     assetId: asset.id,
     uid: `asset:root:${asset.id}`,
     children: []
-  }))
+  })))
 })
 const isSearching = computed(() => !!searchQuery.value.trim())
 
