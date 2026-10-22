@@ -303,7 +303,10 @@ function initTerminalForTab(tabId) {
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     theme: getCurrentTheme(),
     allowProposedApi: true,
-    scrollback: 5000
+    scrollback: 5000,
+    // xterm 6 的滚动条是自绘 DOM（VS Code 系），宽度 = overviewRuler.width（默认 14），
+    // CSS ::-webkit-scrollbar 对它无效，只能通过这个选项调窄
+    overviewRuler: { width: 5 }
   })
 
   const fitAddon = new FitAddon()
