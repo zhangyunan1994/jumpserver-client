@@ -5,10 +5,8 @@
       <ServerList @logout="emit('logout')" @open-asset="onOpenAsset" />
     </div>
 
-    <!-- 分隔条 -->
-    <div class="resize-handle" @mousedown="startResize">
-      <div class="resize-line"></div>
-    </div>
+    <!-- 分隔条（无可见线条，hover 时整条高亮提示可拖拽） -->
+    <div class="resize-handle" @mousedown="startResize"></div>
 
     <!-- 右侧：多标签终端面板 -->
     <div class="main-content">
@@ -111,18 +109,6 @@ onBeforeUnmount(() => {
 }
 .resize-handle:hover {
   background: var(--accent);
-}
-
-.resize-line {
-  width: 2px;
-  height: 24px;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 1px;
-  transition: background 0.15s, height 0.15s;
-}
-.resize-handle:hover .resize-line {
-  background: rgba(255, 255, 255, 0.5);
-  height: 40px;
 }
 
 .main-content {
