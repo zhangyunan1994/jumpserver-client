@@ -1,5 +1,5 @@
 <template>
-  <div class="terminal-panel">
+  <div class="terminal-panel" :style="{ '--terminal-bg': terminalBg }">
     <!-- Tab 栏 -->
     <TerminalTabBar
       @select-tab="handleSelectTab"
@@ -219,6 +219,9 @@ function toggleSearch() {
 function getCurrentTheme() {
   return getColorScheme(appStore.terminalColorScheme, appStore.theme)
 }
+
+// 面板背景跟随终端配色，消除 xterm padding/取整余量露出的白边
+const terminalBg = computed(() => getCurrentTheme().background)
 
 let cleanupDataListener = null
 let cleanupStatusListener = null
@@ -656,6 +659,7 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
   gap: 12px;
   user-select: none;
+  background: var(--bg-primary);
 }
 
 .welcome-icon {
