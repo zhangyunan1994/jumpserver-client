@@ -42,6 +42,17 @@ jobs:
       - name: Build macOS DMG
         run: pnpm tauri build --target ${{ matrix.target }} --bundles dmg
 
+      # 产物重命名为用户友好的平台名：aarch64 → macOS_apple-silicon，x64 → macOS_intel
+      - name: Rename DMG
+        run: |
+          cd "src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
+          for f in *.dmg; do
+            case "$f" in
+              *aarch64*) mv "$f" "${f/aarch64/macOS_apple-silicon}" ;;
+              *x64*) mv "$f" "${f/x64/macOS_intel}" ;;
+            esac
+          done
+
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v7
         with:
@@ -71,6 +82,15 @@ jobs:
 
       - name: Build Windows Installer
         run: pnpm tauri build --bundles nsis
+
+      # 产物重命名：x64-setup → Windows_x64-setup
+      - name: Rename installer
+        shell: bash
+        run: |
+          cd src-tauri/target/release/bundle/nsis
+          for f in *.exe; do
+            mv "$f" "${f/x64-setup/Windows_x64-setup}"
+          done
 
       - name: Upload Windows Installer
         uses: actions/upload-artifact@v7
