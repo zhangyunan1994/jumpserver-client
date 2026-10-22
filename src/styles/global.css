@@ -149,9 +149,3 @@ html, body {
 :root[data-theme="light"] .xterm-viewport::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.2);
 }
-:root[data-theme="light"] .resize-line {
-  background: rgba(0, 0, 0, 0.2);
-}
-:root[data-theme="light"] .resize-handle:hover .resize-line {
-  background: rgba(0, 0, 0, 0.4);
-}
