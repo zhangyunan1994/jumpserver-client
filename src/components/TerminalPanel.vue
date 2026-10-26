@@ -345,6 +345,12 @@ function initTerminalForTab(tabId) {
     window.electronAPI?.sendTerminalData(tabId, data)
   })
 
+  // 新建 tab 成为当前激活 tab 时，终端自动获取输入焦点
+  // （createTab 触发的 activeTabId watch 早于终端创建，此处补上焦点）
+  if (tabId === activeTabId.value && !searchVisible.value) {
+    focusTerminal(tabId)
+  }
+
   // 适配终端大小（RAF 轮询确保 DOM 尺寸已计算）
   tryFitWhenReady(tabId, fitAddon)
 }
@@ -417,6 +423,15 @@ function handleSelectTab(tabId) {
   appStore.setActiveTab(tabId)
 }
 
+// 将输入焦点交给指定 tab 的终端（容器处于 display:none 时 focus 无效）
+function focusTerminal(tabId) {
+  if (!tabId) return
+  const term = terminals.value[tabId]
+  if (term) {
+    try { term.focus() } catch (e) { /* ignore */ }
+  }
+}
+
 function handleCloseTab(tabId) {
   // 断开该 tab 的 SSH 连接（TabBar 只负责 emit，关闭逻辑统一在这里收口）
   window.electronAPI?.disconnectSSH(tabId)?.catch(() => {})
@@ -472,15 +487,23 @@ watch(activeTabId, (newId, oldId) => {
   if (fitAddon) {
     tryFitWhenReady(newId, fitAddon)
   }
-  // 切换 tab 时，如果搜索栏打开，重新在新 tab 中搜索
-  if (searchVisible.value && searchQuery.value) {
+  if (searchVisible.value) {
+    // 切换 tab 时，如果搜索栏打开且有内容，重新在新 tab 中搜索
+    if (searchQuery.value) {
+      nextTick(() => {
+        // 确保输入框保持焦点
+        const el = searchInputRef.value
+        if (el) {
+          el.focus()
+        }
+        runSearch('next')
+      })
+    }
+  } else {
+    // 切换到的标签页终端自动获取输入焦点
+    // （需等 DOM 更新、目标容器脱离 display:none 后 focus 才有效）
     nextTick(() => {
-      // 确保输入框保持焦点
-      const el = searchInputRef.value
-      if (el) {
-        el.focus()
-      }
-      runSearch('next')
+      focusTerminal(newId)
     })
   }
 })
